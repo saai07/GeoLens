@@ -14,9 +14,15 @@ env/
 
 # --- Environment Variables ---
 .env
+.env.local
 
 # --- IDEs & Editors ---
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# --- Frontend ---
+node_modules/
+.next/
+out/
