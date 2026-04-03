@@ -1,29 +1,20 @@
-"""
-Pydantic schemas for the API endpoints.
+"""Pydantic models for API request/response validation."""
 
-Defines the request and response shapes for the /audit and /health endpoints.
-All validation, field constraints, and documentation live here.
-"""
-
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
 
 class AuditRequest(BaseModel):
-    """Request body for POST /audit."""
-
     url: HttpUrl = Field(
         ...,
-        description="The public webpage URL to audit for AI citation readiness.",
+        description="Public webpage URL to audit.",
         examples=["https://stripe.com"],
     )
 
 
 class MetricResult(BaseModel):
-    """Detailed result for a single scoring metric."""
-
-    metric: str = Field(..., description="Human-readable name of the metric.")
+    metric: str = Field(..., description="Name of the metric.")
     score: int = Field(..., ge=0, description="Points earned.")
     max_score: int = Field(..., gt=0, description="Maximum possible points.")
     status: Literal["pass", "partial", "fail"] = Field(
@@ -50,6 +41,10 @@ class AuditResponse(BaseModel):
     recommended_schema: dict = Field(
         ..., description="Gemini-generated JSON-LD block ready to embed."
     )
+    page_title: str = Field(default="")
+    page_description: str = Field(default="")
+    page_headings: list[dict[str, Any]] = Field(default_factory=list)
+    page_image: str = Field(default="")
 
 
 class HealthResponse(BaseModel):
