@@ -29,8 +29,8 @@ GeoLens audits all of this automatically and gives you a **score out of 100** wi
 
 ```bash
 # Clone the repository
-git clone https://github.com/saai07/geolens.git
-cd geolens
+git clone https://github.com/saai07/GeoLens
+cd GeoLens
 
 # Create a virtual environment
 python -m venv venv
@@ -196,11 +196,11 @@ The top 3 lowest-scoring metrics generate **concrete, actionable recommendations
 
 ## Where Gemini Is (and Isn't) Used
 
-### ✅ Gemini IS used for:
+### Gemini IS used for:
 
 - **JSON-LD Schema Generation** — Gemini analyzes the page's title, meta description, top headings, and URL to produce a context-aware, ready-to-embed JSON-LD structured data block. It selects the appropriate `@type` (Article, Organization, Product, or WebPage) and fills in realistic property values.
 
-### ❌ Gemini is NOT used for:
+###  Gemini is NOT used for:
 
 - **Scoring** — All 5 metrics are computed using pure, deterministic Python rules. No LLM is involved in scoring. This ensures scores are **consistent, reproducible, and explainable**. An LLM-based score would vary between runs and offer no transparency into what was evaluated.
 - **Scraping** — Page fetching and HTML parsing use httpx and BeautifulSoup respectively.
@@ -237,3 +237,194 @@ GeoLens supports GEO by:
 The result: your content becomes **more discoverable, more parseable, and more citable** by the AI engines that are increasingly replacing traditional search.
 
 ---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        FRONTEND (Next.js 16)                    │
+│  page.tsx → audit/loading/page.tsx → audit/results/page.tsx     │
+│  Components: ScoreHero, MetricGrid, PageSnapshot, JsonLdViewer  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ POST /audit { url }
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     BACKEND (FastAPI + Python)                  │
+│                                                                 │
+│  ┌──────────┐    ┌─────────────┐    ┌───────────────────────┐   │
+│  │ Pydantic │──▶│   Scraper   ─▶   │     Parallel Tasks    │  │
+│  │ Validate │    │ httpx + BS4 │    │                       │   │
+│  └──────────┘    └─────────────┘    │  ┌─────────────────┐  │   │
+│                                     │  │  Rule-Based     │  │   │
+│  ┌──────────┐                       │  │  Scorer (5 GEO  │  │   │
+│  │ SlowAPI  │  Rate limit: 10/min   │  │  metrics)       │  │   │
+│  │ Limiter  │                       │  └─────────────────┘  │   │
+│  └──────────┘                       │  ┌─────────────────┐  │   │
+│                                     │  │  Gemini LLM     │  │   │
+│  ┌──────────┐                       │  │  (JSON-LD       │  │   │
+│  │ In-Memory│  URL-keyed TTL cache  │  │  generation)    │  │   │
+│  │ Cache    │                       │  └─────────────────┘  │   │
+│  └──────────┘                       └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Data Flow:**  
+`URL input → Pydantic validation → httpx fetch (HTML + robots.txt) → BeautifulSoup parse → [Scoring + Gemini JSON-LD] in parallel → AuditResponse → Cache → Frontend display`
+
+---
+
+## Design Decision Log
+
+This section documents my step-by-step thinking process — how I broke down the problem, what options I considered, and why I chose each approach.
+
+### Step 1: Breaking Down the Problem
+
+The task requires four capabilities: (1) scraping a URL, (2) extracting page metadata, (3) scoring for GEO readiness, and (4) generating a recommended JSON-LD schema. I decomposed these into independent modules — `scraper.py`, `scorer.py`, and `llm.py` — so each can be tested, modified, and reasoned about independently.
+
+### Step 2: Scraping — httpx vs. requests vs. Playwright
+
+| Option | Pros | Cons |
+|---|---|---|
+| **httpx (chosen)** | Async-native, fits FastAPI; connection pooling; follows redirects; lightweight | Cannot execute JavaScript |
+| requests | Simple, well-known | Synchronous — blocks the event loop in FastAPI |
+| Playwright | Full browser rendering; captures JS-rendered content | Heavy dependency (~100MB); slow; overkill for metadata extraction |
+
+**Decision:** httpx. Most public webpages serve metadata (title, meta tags, JSON-LD) in the initial HTML response. Playwright's overhead isn't justified for extracting `<title>`, `<meta>`, and `<script type="application/ld+json">` tags, which are always server-rendered for SEO purposes.
+
+### Step 3: Scoring — Rule-Based vs. LLM-Based
+
+| Option | Pros | Cons |
+|---|---|---|
+| **Rule-based (chosen)** | Deterministic, reproducible, fast, zero API cost, fully transparent | Less flexible for nuanced evaluation |
+| LLM-based | Could evaluate content quality and semantic richness | Non-deterministic; expensive; opaque; varies between runs |
+
+**Decision:** Rule-based. Scoring must be consistent — auditing the same page twice should return the same score. LLM scores would fluctuate between runs, making them unreliable for tracking improvements over time. Additionally, rule-based scoring is fully explainable: each metric shows exactly what was checked and what was found.
+
+### Step 4: JSON-LD Schema — Rule-Based vs. LLM-Generated
+
+| Option | Pros | Cons |
+|---|---|---|
+| Template fill | Fast, predictable, no API cost | Generic output; can't adapt to diverse page types; poor property values |
+| **Gemini LLM (chosen)** | Context-aware; generates realistic property values; adapts to page content | Requires API key; adds latency; can fail |
+
+**Decision:** Gemini. A template can produce `{"@type": "Organization", "name": "???"}`  but it can't infer that Stripe is a "financial infrastructure platform" from the page content. Gemini reads the title, description, and headings to generate semantically accurate schemas with realistic values. This is the one area where LLM intelligence adds clear, measurable value.
+
+**Hybrid approach:** I use keyword-frequency heuristics to detect the schema `@type` (Article, Product, Organization) before passing it to Gemini. This gives the LLM a strong starting point and reduces hallucination risk, rather than asking it to decide everything from scratch.
+
+### Step 5: Error Handling Strategy
+
+Rather than returning generic 500 errors, I mapped each failure mode to a specific, informative HTTP status:
+
+| Failure | Status Code | Why |
+|---|---|---|
+| Invalid URL format | 422 | Pydantic `HttpUrl` validation catches this before any processing |
+| Connection refused | 502 | The target server is unreachable — a gateway error |
+| HTTP 4xx/5xx from target | 502 | Upstream failure, not our fault |
+| Timeout | 504 | Gateway timeout — target too slow |
+| Non-HTML content | 422 | Unprocessable — we audit HTML pages, not PDFs or images |
+| Gemini API failure | Graceful fallback | Returns a basic WebPage schema instead of failing the entire audit |
+
+### Step 6: Caching and Rate Limiting
+
+- **Caching:** In-memory TTL cache (`cachetools`) keyed by URL. Avoids redundant scraping and Gemini calls for repeated audits of the same page. Chosen over Redis for simplicity — this is a single-server prototype.
+- **Rate limiting:** `slowapi` at 10 requests/minute per IP. Prevents abuse and protects the Gemini API quota.
+
+---
+
+## Scaling to many pages: Architectural Redesign
+
+If GeoLens needed to audit an entire website instead of a single URL, here is how I would redesign the architecture:
+
+### Architecture: Multi-Agent Pipeline
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
+│   Sitemap    │────▶│   Message    │────▶│   Worker Pool    │
+│   Crawler    │     │   Queue      │     │   (N workers)    │
+│   Agent      │     │  (Redis /    │     │                  │
+│              │     │   RabbitMQ)  │     │  ┌────────────┐  │
+│ • Parse      │     │              │     │  │  Scraper   │  │
+│   sitemap.xml│     │ • URL jobs   │     │  │  Worker    │  │
+│ • Discover   │     │ • Priority   │     │  └────────────┘  │
+│   links      │     │ • Retry      │     │  ┌────────────┐  │
+│ • Deduplicate│     │   tracking   │     │  │  Scorer    │  │
+│              │     │              │     │  │  Worker    │  │
+└──────────────┘     └──────────────┘     │  └────────────┘  │
+                                          │  ┌────────────┐  │
+                                          │  │  LLM       │  │
+                                          │  │  Worker    │  │
+                                          │  └────────────┘  │
+                                          └────────┬─────────┘
+                                                   │
+                                          ┌────────▼─────────┐
+                                          │   Aggregator     │
+                                          │   • Site-wide    │
+                                          │     score        │
+                                          │   • Priority     │
+                                          │     ranking      │
+                                          │   • PDF report   │
+                                          └──────────────────┘
+```
+
+### Key Design Decisions for Scale
+
+**1. Parallel Processing with a Message Queue**  
+Instead of sequential URL processing, a Sitemap Crawler Agent discovers all URLs and publishes them to a message queue (Redis or RabbitMQ). A pool of workers consumes jobs in parallel. With 50 pages at ~3 seconds each (scraping + scoring + LLM), sequential processing would take ~2.5 minutes. With 10 parallel workers, it drops to ~15 seconds.
+
+**2. Separation of Scraping, Scoring, and LLM Workers**  
+Scraping is I/O-bound (network). Scoring is CPU-bound (HTML parsing). LLM calls are I/O-bound but rate-limited by the API. Separating these into distinct worker types allows independent scaling — e.g., 10 scraper workers but only 3 LLM workers (to respect Gemini's rate limits).
+
+**3. Failure Handling**  
+- **Per-URL retries** with exponential backoff (max 3 attempts).
+- **Dead-letter queue** for URLs that fail all retries — the report still generates without them.
+- **Circuit breaker** on the Gemini API — if 5 consecutive calls fail, stop sending LLM requests and use fallback schemas for remaining URLs.
+- **Partial results** — a site-wide report should still be generated even if 5 out of 50 pages fail.
+
+**4. Where LLMs Add Value vs. Deterministic Logic at Scale**  
+
+| Task | Approach at Scale | Why |
+|---|---|---|
+| Scoring (per page) | **Deterministic** | Must be consistent across 50+ pages for meaningful comparison |
+| JSON-LD generation | **LLM** (batched) | Each page needs unique, context-aware structured data |
+| Site-wide summary | **LLM** | Synthesize patterns across all pages into executive summary |
+| Priority ranking | **Deterministic** | Sort pages by score — no LLM needed |
+| Recommendations | **Hybrid** | Template-based per page; LLM for site-wide strategic recommendations |
+
+**5. Storage**  
+Replace in-memory cache with PostgreSQL for persistent results, enabling historical tracking and trend analysis across audits.
+
+---
+
+## Assumptions & Known Limitations
+
+### Assumptions
+
+1. **Pages are publicly accessible** — No authentication or login-gated content is supported.
+2. **Metadata is server-rendered** — Title, meta tags, and JSON-LD are present in the initial HTML (not injected by JavaScript after page load). This holds true for SEO-optimized pages, which are the primary target.
+3. **Single-page audits** — The current system audits one URL per request, not entire websites.
+4. **Gemini API availability** — The LLM integration depends on Google Gemini being reachable. A fallback schema is provided if it fails.
+
+### Known Limitations
+
+1. **No JavaScript rendering** — Pages that rely heavily on client-side rendering (SPAs like React apps without SSR) may return incomplete metadata. Using Playwright would solve this but adds significant overhead.
+2. **Simplified robots.txt parsing** — The parser checks for `Disallow: /` blocks per user-agent but doesn't handle complex rules like `Allow` overrides, wildcards (`*` in paths), or `Crawl-delay` directives.
+3. **Heading analysis limited to h1–h3** — Deeper heading levels (h4–h6) are not scored, though they rarely impact AI citation readiness.
+4. **In-memory cache** — Cache is lost on server restart. A production system should use Redis or a database.
+5. **No authentication** — The API is open. A production deployment would need API key authentication or OAuth.
+6. **Rate limiting is per-IP** — Behind a reverse proxy, all requests may appear from the same IP unless `X-Forwarded-For` is configured.
+7. **Limited schema types** — The keyword heuristic detects Article, Product, Organization, and WebPage. Other schema.org types (Event, LocalBusiness, FAQ, etc.) are not yet supported.
+8. **Synchronous single-endpoint processing** — The `/audit` endpoint handles scraping, scoring, and LLM generation all in one synchronous request. This works well for a prototype, but in production a slow scrape or delayed Gemini response could cause client-side timeouts on complex pages.
+
+### What I Would Improve with More Time
+
+1. **JavaScript rendering** — Add optional Playwright-based scraping for SPA pages, selectable via a query parameter.
+2. **More schema types** — Expand detection to cover FAQ, Event, LocalBusiness, HowTo, and Recipe schemas.
+3. **Historical tracking** — Store audit results in a database and show score trends over time.
+4. **PDF report export** — Generate a downloadable audit report with charts and recommendations.
+5. **Batch URL support** — Accept multiple URLs in a single request with parallel processing.
+6. **Authentication** — Add API key-based access control for production use.
+7. **Async job pattern** — Decouple the audit into a background job. The endpoint would return a job ID immediately, process the audit asynchronously, and the frontend would poll or use WebSockets for results. This eliminates timeout risk and enables the 50+ page scale-up.
+
+---
+
+Built with ❤️ for **Villion**
