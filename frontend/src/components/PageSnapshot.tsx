@@ -7,7 +7,7 @@ const LEVEL_STYLES: Record<string, string> = {
 };
 
 export default function PageSnapshot({ data }: { data: AuditResponse }) {
-  const { page_title, page_description, page_headings, url } = data;
+  const { page_title, page_description, page_headings, page_image, url } = data;
 
   return (
     <section className="space-y-3">
@@ -15,6 +15,24 @@ export default function PageSnapshot({ data }: { data: AuditResponse }) {
         Page Snapshot
       </h2>
       <div className="border border-gray-100 rounded-xl p-5 space-y-4">
+        {/* Page Image */}
+        {page_image && (
+          <div className="space-y-1">
+            <p className="text-xs text-gray-400 uppercase tracking-wider">Page Image</p>
+            <div className="overflow-hidden rounded-lg border border-gray-100">
+              <img
+                src={page_image}
+                alt={page_title || "Page image"}
+                className="w-full h-48 object-cover"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 truncate">{page_image}</p>
+          </div>
+        )}
+
         {/* URL */}
         <div className="space-y-1">
           <p className="text-xs text-gray-400 uppercase tracking-wider">Audited URL</p>
