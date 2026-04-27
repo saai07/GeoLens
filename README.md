@@ -427,4 +427,3 @@ Replace in-memory cache with PostgreSQL for persistent results, enabling histori
 
 ---
 
-Built with ❤️ for **Villion**
