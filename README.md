@@ -415,15 +415,5 @@ Replace in-memory cache with PostgreSQL for persistent results, enabling histori
 7. **Limited schema types** — The keyword heuristic detects Article, Product, Organization, and WebPage. Other schema.org types (Event, LocalBusiness, FAQ, etc.) are not yet supported.
 8. **Synchronous single-endpoint processing** — The `/audit` endpoint handles scraping, scoring, and LLM generation all in one synchronous request. This works well for a prototype, but in production a slow scrape or delayed Gemini response could cause client-side timeouts on complex pages.
 
-### What I Would Improve with More Time
 
-1. **JavaScript rendering** — Add optional Playwright-based scraping for SPA pages, selectable via a query parameter.
-2. **More schema types** — Expand detection to cover FAQ, Event, LocalBusiness, HowTo, and Recipe schemas.
-3. **Historical tracking** — Store audit results in a database and show score trends over time.
-4. **PDF report export** — Generate a downloadable audit report with charts and recommendations.
-5. **Batch URL support** — Accept multiple URLs in a single request with parallel processing.
-6. **Authentication** — Add API key-based access control for production use.
-7. **Async job pattern** — Decouple the audit into a background job. The endpoint would return a job ID immediately, process the audit asynchronously, and the frontend would poll or use WebSockets for results. This eliminates timeout risk and enables the 50+ page scale-up.
-
----
 
