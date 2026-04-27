@@ -330,7 +330,7 @@ Rather than returning generic 500 errors, I mapped each failure mode to a specif
 - **Rate limiting:** `slowapi` at 10 requests/minute per IP. Prevents abuse and protects the Gemini API quota.
 
 
-**4. Where LLMs Add Value vs. Deterministic Logic at Scale**  
+**7. Where LLMs Add Value vs. Deterministic Logic at Scale**  
 
 | Task | Approach at Scale | Why |
 |---|---|---|
@@ -340,7 +340,7 @@ Rather than returning generic 500 errors, I mapped each failure mode to a specif
 | Priority ranking | **Deterministic** | Sort pages by score — no LLM needed |
 | Recommendations | **Hybrid** | Template-based per page; LLM for site-wide strategic recommendations |
 
-**5. Storage**  
+**8. Storage**  
 Replace in-memory cache with PostgreSQL for persistent results, enabling historical tracking and trend analysis across audits.
 
 ---
