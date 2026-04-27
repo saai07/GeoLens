@@ -404,16 +404,7 @@ Replace in-memory cache with PostgreSQL for persistent results, enabling histori
 3. **Single-page audits** — The current system audits one URL per request, not entire websites.
 4. **Gemini API availability** — The LLM integration depends on Google Gemini being reachable. A fallback schema is provided if it fails.
 
-### Known Limitations
 
-1. **No JavaScript rendering** — Pages that rely heavily on client-side rendering (SPAs like React apps without SSR) may return incomplete metadata. Using Playwright would solve this but adds significant overhead.
-2. **Simplified robots.txt parsing** — The parser checks for `Disallow: /` blocks per user-agent but doesn't handle complex rules like `Allow` overrides, wildcards (`*` in paths), or `Crawl-delay` directives.
-3. **Heading analysis limited to h1–h3** — Deeper heading levels (h4–h6) are not scored, though they rarely impact AI citation readiness.
-4. **In-memory cache** — Cache is lost on server restart. A production system should use Redis or a database.
-5. **No authentication** — The API is open. A production deployment would need API key authentication or OAuth.
-6. **Rate limiting is per-IP** — Behind a reverse proxy, all requests may appear from the same IP unless `X-Forwarded-For` is configured.
-7. **Limited schema types** — The keyword heuristic detects Article, Product, Organization, and WebPage. Other schema.org types (Event, LocalBusiness, FAQ, etc.) are not yet supported.
-8. **Synchronous single-endpoint processing** — The `/audit` endpoint handles scraping, scoring, and LLM generation all in one synchronous request. This works well for a prototype, but in production a slow scrape or delayed Gemini response could cause client-side timeouts on complex pages.
 
 
 
